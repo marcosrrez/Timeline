@@ -75,6 +75,37 @@ export default function MemoryTimeline() {
     moment: { icon: Clock, name: 'Moment' }
   };
 
+  // --- Utility Callbacks (declared early to avoid TS2448) ---
+  const resetMemoryForm = useCallback(() => {
+    if (!mountedRef.current) return;
+    
+    setCurrentMemory({
+      date: '',
+      title: '',
+      description: '',
+      emotion: 'happy',
+      location: '',
+      people: '',
+      category: 'life',
+      videoBlob: null,
+      videoUrl: ''
+    });
+    setRecordingTime(0);
+    setIsRecording(false);
+    setIsPaused(false);
+    setCameraError(null);
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
   const calculateStats = useCallback((date: string): Stats => {
     const birthDate = new Date(date);
     const today = new Date();
@@ -102,7 +133,7 @@ export default function MemoryTimeline() {
     };
   }, []);
 
-  // Initialize data on mount
+  // --- Effects ---
   useEffect(() => {
     mountedRef.current = true;
     
@@ -133,8 +164,7 @@ export default function MemoryTimeline() {
     };
   }, [memories, stopCamera]);
 
-  
-
+  // --- Other Callbacks ---
   const getMemoryForDate = useCallback((date: string) => {
     return memories.find(m => m.date === date);
   }, [memories]);
@@ -196,26 +226,6 @@ export default function MemoryTimeline() {
     resetMemoryForm();
   }, [memories, currentMemory, stopCamera, resetMemoryForm]);
 
-  const resetMemoryForm = useCallback(() => {
-    if (!mountedRef.current) return;
-    
-    setCurrentMemory({
-      date: '',
-      title: '',
-      description: '',
-      emotion: 'happy',
-      location: '',
-      people: '',
-      category: 'life',
-      videoBlob: null,
-      videoUrl: ''
-    });
-    setRecordingTime(0);
-    setIsRecording(false);
-    setIsPaused(false);
-    setCameraError(null);
-  }, []);
-
   // Video recording functions
   const startCamera = useCallback(async () => {
     try {
@@ -231,16 +241,6 @@ export default function MemoryTimeline() {
     } catch (err) {
       console.error('Error accessing camera:', err);
       setCameraError('Unable to access camera. Please check permissions.');
-    }
-  }, []);
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
     }
   }, []);
 
@@ -539,8 +539,6 @@ export default function MemoryTimeline() {
               cellClass += `${emotion.color} border-gray-800 text-white shadow-md `;
             } else if (isToday) {
               cellClass += "bg-green-500 text-white border-green-600 animate-pulse ";
-            } else if (isPast) {
-              cellClass += "bg-gray-300 border-gray-400 text-gray-600 hover:bg-gray-400 ";
             } else {
               cellClass += "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200 ";
             }

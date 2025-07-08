@@ -1,10 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { Camera, Calendar, Heart, MapPin, Users, Star, Clock, Plus, Edit3, X, Video, Play, Pause, RotateCcw, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
+interface Stats {
+  weeksLived: number;
+  totalWeeks: number;
+  weeksRemaining: number;
+  percentageLived: number;
+  daysLived: number;
+  yearsLived: number;
+  birthDate: Date;
+}
+
 export default function MemoryTimeline() {
   const [step, setStep] = useState(1);
   const [birthdate, setBirthdate] = useState('');
-  const [stats, setStats] = useState(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [memories, setMemories] = useState([]);
   const [viewMode, setViewMode] = useState('annual'); // annual, monthly, weekly, daily
   const [selectedPeriod, setSelectedPeriod] = useState(null);
@@ -74,7 +84,7 @@ export default function MemoryTimeline() {
     localStorage.setItem('memories', JSON.stringify(memories));
   }, [memories]);
 
-  const calculateStats = (date: string) => {
+  const calculateStats = (date: string): Stats => {
     const birthDate = new Date(date);
     const today = new Date();
     

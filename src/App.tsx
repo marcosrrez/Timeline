@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, Calendar, Heart, MapPin, Users, Star, Clock, Plus, Edit3, X, Video, Play, Pause, RotateCcw, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Stats {
@@ -11,15 +11,27 @@ interface Stats {
   birthDate: string;
 }
 
+interface Memory {
+  date: string;
+  title: string;
+  description: string;
+  emotion: string;
+  location: string;
+  people: string;
+  category: string;
+  videoBlob: Blob | null;
+  videoUrl: string;
+}
+
 export default function MemoryTimeline() {
   const [step, setStep] = useState(1);
   const [birthdate, setBirthdate] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [memories, setMemories] = useState([]);
-  const [viewMode, setViewMode] = useState('annual'); // annual, monthly, weekly, daily
-  const [selectedPeriod, setSelectedPeriod] = useState(null);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [viewMode, setViewMode] = useState<'annual' | 'monthly' | 'weekly' | 'daily'>('annual');
+  const [selectedPeriod, setSelectedPeriod] = useState<string | number | null>(null);
   const [showMemoryModal, setShowMemoryModal] = useState(false);
-  const [currentMemory, setCurrentMemory] = useState({
+  const [currentMemory, setCurrentMemory] = useState<Memory>({
     date: '',
     title: '',
     description: '',
@@ -35,11 +47,14 @@ export default function MemoryTimeline() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [mediaRecorder, setMediaRecorder] = useState(null);
-  const [recordedChunks, setRecordedChunks] = useState([]);
-  const videoRef = useRef(null);
-  const playbackRef = useRef(null);
-  const streamRef = useRef(null);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playbackRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef(true);
 
   const emotions = {
     happy: { icon: '😊', color: 'bg-yellow-400', name: 'Happy' },
@@ -60,45 +75,52 @@ export default function MemoryTimeline() {
     moment: { icon: Clock, name: 'Moment' }
   };
 
+  // Initialize data on mount
   useEffect(() => {
-    const storedBirthdate = localStorage.getItem('birthdate');
-    if (storedBirthdate) {
-      setBirthdate(storedBirthdate);
-      setStats(calculateStats(storedBirthdate));
-      setStep(2);
-    }
-
-    const storedMemories = localStorage.getItem('memories');
-    if (storedMemories) {
-      setMemories(JSON.parse(storedMemories));
-    }
+    mountedRef.current = true;
+    
+    // Initialize with some sample data if needed
+    const sampleBirthdate = '1990-01-01';
+    setBirthdate(sampleBirthdate);
+    setStats(calculateStats(sampleBirthdate));
+    setStep(2);
+    
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
+  // Cleanup on unmount
   useEffect(() => {
-    if (birthdate) {
-      localStorage.setItem('birthdate', birthdate);
-    }
-  }, [birthdate]);
-
-  useEffect(() => {
-    localStorage.setItem('memories', JSON.stringify(memories));
+    return () => {
+      stopCamera();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      // Cleanup video URLs to prevent memory leaks
+      memories.forEach(memory => {
+        if (memory.videoUrl) {
+          URL.revokeObjectURL(memory.videoUrl);
+        }
+      });
+    };
   }, [memories]);
 
-  const calculateStats = (date: string): Stats => {
+  const calculateStats = useCallback((date: string): Stats => {
     const birthDate = new Date(date);
     const today = new Date();
     
     const msInWeek = 1000 * 60 * 60 * 24 * 7;
-    const weeksLived = Math.floor((today - birthDate) / msInWeek);
+    const weeksLived = Math.floor((today.getTime() - birthDate.getTime()) / msInWeek);
     
     const totalWeeks = 4160; // ~80 years
-    const weeksRemaining = totalWeeks - weeksLived;
-    const percentageLived = Math.round((weeksLived / totalWeeks) * 100);
+    const weeksRemaining = Math.max(0, totalWeeks - weeksLived);
+    const percentageLived = Math.min(100, Math.round((weeksLived / totalWeeks) * 100));
     
     const msInDay = 1000 * 60 * 60 * 24;
-    const daysLived = Math.floor((today - birthDate) / msInDay);
+    const daysLived = Math.floor((today.getTime() - birthDate.getTime()) / msInDay);
     
-    const yearsLived = Math.floor((today - birthDate) / (1000 * 60 * 60 * 24 * 365.25));
+    const yearsLived = Math.floor((today.getTime() - birthDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
     
     return {
       weeksLived,
@@ -109,19 +131,19 @@ export default function MemoryTimeline() {
       yearsLived,
       birthDate: date
     };
-  };
+  }, []);
 
-  const getMemoryForDate = (date) => {
+  const getMemoryForDate = useCallback((date: string) => {
     return memories.find(m => m.date === date);
-  };
+  }, [memories]);
 
-  const getMemoriesForPeriod = (period) => {
+  const getMemoriesForPeriod = useCallback((period: string | number) => {
     if (viewMode === 'annual') {
-      return memories.filter(m => m.date.startsWith(period));
+      return memories.filter(m => m.date.startsWith(period.toString()));
     } else if (viewMode === 'monthly') {
-      return memories.filter(m => m.date.startsWith(period));
+      return memories.filter(m => m.date.startsWith(period.toString()));
     } else if (viewMode === 'weekly') {
-      const weekStart = new Date(period);
+      const weekStart = new Date(period.toString());
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekEnd.getDate() + 6);
       return memories.filter(m => {
@@ -130,14 +152,16 @@ export default function MemoryTimeline() {
       });
     }
     return [];
-  };
+  }, [memories, viewMode]);
 
-  const handleSubmit = () => {
-    setStats(calculateStats(birthdate));
-    setStep(2);
-  };
+  const handleSubmit = useCallback(() => {
+    if (birthdate) {
+      setStats(calculateStats(birthdate));
+      setStep(2);
+    }
+  }, [birthdate, calculateStats]);
 
-  const openMemoryModal = (date) => {
+  const openMemoryModal = useCallback((date: string) => {
     const existingMemory = getMemoryForDate(date);
     if (existingMemory) {
       setCurrentMemory(existingMemory);
@@ -155,9 +179,11 @@ export default function MemoryTimeline() {
       });
     }
     setShowMemoryModal(true);
-  };
+  }, [getMemoryForDate]);
 
-  const saveMemory = () => {
+  const saveMemory = useCallback(() => {
+    if (!mountedRef.current) return;
+    
     const updatedMemories = memories.filter(m => m.date !== currentMemory.date);
     if (currentMemory.title.trim()) {
       updatedMemories.push({ ...currentMemory });
@@ -166,9 +192,11 @@ export default function MemoryTimeline() {
     setShowMemoryModal(false);
     stopCamera();
     resetMemoryForm();
-  };
+  }, [memories, currentMemory]);
 
-  const resetMemoryForm = () => {
+  const resetMemoryForm = useCallback(() => {
+    if (!mountedRef.current) return;
+    
     setCurrentMemory({
       date: '',
       title: '',
@@ -180,123 +208,143 @@ export default function MemoryTimeline() {
       videoBlob: null,
       videoUrl: ''
     });
-    setRecordedChunks([]);
     setRecordingTime(0);
     setIsRecording(false);
     setIsPaused(false);
-  };
+    setCameraError(null);
+  }, []);
 
   // Video recording functions
-  const startCamera = async () => {
+  const startCamera = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setCameraError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 640, height: 480 }, 
+        audio: true 
+      });
       streamRef.current = stream;
-      if (videoRef.current) {
+      if (videoRef.current && mountedRef.current) {
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
       console.error('Error accessing camera:', err);
+      setCameraError('Unable to access camera. Please check permissions.');
     }
-  };
+  }, []);
 
-  const stopCamera = () => {
+  const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-  };
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
 
-  const startRecording = () => {
-    if (!streamRef.current) return;
+  const startRecording = useCallback(() => {
+    if (!streamRef.current || !mountedRef.current) return;
 
-    const recorder = new MediaRecorder(streamRef.current);
-    const chunks = [];
+    try {
+      const recorder = new MediaRecorder(streamRef.current);
+      const chunks: BlobPart[] = [];
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunks.push(event.data);
-      }
-    };
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
 
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      setCurrentMemory(prev => ({
-        ...prev,
-        videoBlob: blob,
-        videoUrl: url
-      }));
-      setRecordedChunks(chunks);
-    };
+      recorder.onstop = () => {
+        if (!mountedRef.current) return;
+        
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        
+        setCurrentMemory(prev => ({
+          ...prev,
+          videoBlob: blob,
+          videoUrl: url
+        }));
+      };
 
-    recorder.start();
-    setMediaRecorder(recorder);
-    setIsRecording(true);
-    setIsPaused(false);
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+      setIsPaused(false);
 
-    // Timer
-    const startTime = Date.now();
-    const timer = setInterval(() => {
-      if (!isPaused) {
-        setRecordingTime(Math.floor((Date.now() - startTime) / 1000));
-      }
-    }, 1000);
+      // Timer
+      const startTime = Date.now();
+      timerRef.current = setInterval(() => {
+        if (mountedRef.current && !isPaused) {
+          setRecordingTime(Math.floor((Date.now() - startTime) / 1000));
+        }
+      }, 1000);
+    } catch (err) {
+      console.error('Error starting recording:', err);
+      setCameraError('Unable to start recording. Please try again.');
+    }
+  }, [isPaused]);
 
-    // Store timer reference
-    recorder.timer = timer;
-  };
-
-  const stopRecording = () => {
+  const stopRecording = useCallback(() => {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
-      clearInterval(mediaRecorder.timer);
-      setIsRecording(false);
-      setIsPaused(false);
+      setMediaRecorder(null);
     }
-  };
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsRecording(false);
+    setIsPaused(false);
+  }, [mediaRecorder]);
 
-  const pauseRecording = () => {
+  const pauseRecording = useCallback(() => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       mediaRecorder.pause();
       setIsPaused(true);
     }
-  };
+  }, [mediaRecorder]);
 
-  const resumeRecording = () => {
+  const resumeRecording = useCallback(() => {
     if (mediaRecorder && mediaRecorder.state === 'paused') {
       mediaRecorder.resume();
       setIsPaused(false);
     }
-  };
+  }, [mediaRecorder]);
 
-  const retakeVideo = () => {
+  const retakeVideo = useCallback(() => {
+    if (currentMemory.videoUrl) {
+      URL.revokeObjectURL(currentMemory.videoUrl);
+    }
     setCurrentMemory(prev => ({
       ...prev,
       videoBlob: null,
       videoUrl: ''
     }));
-    setRecordedChunks([]);
     setRecordingTime(0);
     setIsRecording(false);
     setIsPaused(false);
-  };
+  }, [currentMemory.videoUrl]);
 
-  const downloadVideo = () => {
+  const downloadVideo = useCallback(() => {
     if (currentMemory.videoBlob) {
       const url = URL.createObjectURL(currentMemory.videoBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `memory-${currentMemory.date}.webm`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
-  };
+  }, [currentMemory.videoBlob, currentMemory.date]);
 
-  const formatTime = (seconds) => {
+  const formatTime = useCallback((seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  }, []);
 
   const renderAnnualView = () => {
     if (!stats) return null;
@@ -376,7 +424,7 @@ export default function MemoryTimeline() {
           {months.map((month, index) => {
             const monthKey = `${selectedPeriod}-${(index + 1).toString().padStart(2, '0')}`;
             const monthMemories = getMemoriesForPeriod(monthKey);
-            const isPast = selectedPeriod < currentYear || (selectedPeriod === currentYear && index < currentMonth);
+            const isPast = Number(selectedPeriod) < currentYear || (Number(selectedPeriod) === currentYear && index < currentMonth);
             const isCurrent = selectedPeriod === currentYear && index === currentMonth;
             
             let cellClass = "p-4 rounded-lg transition-all cursor-pointer hover:scale-105 border-2 text-center ";
@@ -412,14 +460,14 @@ export default function MemoryTimeline() {
   };
 
   const renderWeeklyView = () => {
-    if (!selectedPeriod) return null;
+    if (!selectedPeriod || typeof selectedPeriod !== 'string') return null;
     
     const [year, month] = selectedPeriod.split('-');
-    const firstDay = new Date(year, month - 1, 1);
-    const lastDay = new Date(year, month, 0);
+    const firstDay = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const lastDay = new Date(parseInt(year), parseInt(month), 0);
     const weeks = [];
     
-    let currentWeek = [];
+    let currentWeek: (Date | null)[] = [];
     let currentDate = new Date(firstDay);
     
     // Add empty cells for days before the first day of the month
@@ -457,7 +505,7 @@ export default function MemoryTimeline() {
             Back to Months
           </button>
           <h2 className="text-xl font-semibold text-gray-800">
-            {new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            {new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
           </h2>
           <div className="w-20"></div>
         </div>
@@ -485,7 +533,7 @@ export default function MemoryTimeline() {
             let cellClass = "p-4 rounded-lg transition-all cursor-pointer hover:scale-105 border-2 text-center ";
             
             if (memory) {
-              const emotion = emotions[memory.emotion];
+              const emotion = emotions[memory.emotion as keyof typeof emotions];
               cellClass += `${emotion.color} border-gray-800 text-white shadow-md `;
             } else if (isToday) {
               cellClass += "bg-green-500 text-white border-green-600 animate-pulse ";
@@ -503,11 +551,11 @@ export default function MemoryTimeline() {
                   setSelectedPeriod(dateStr);
                   setViewMode('daily');
                 }}
-                title={memory ? `${memory.title} - ${emotions[memory.emotion].name}` : dateStr}
+                title={memory ? `${memory.title} - ${emotions[memory.emotion as keyof typeof emotions].name}` : dateStr}
               >
                 <div className="font-medium">{date.getDate()}</div>
                 {memory && (
-                  <div className="text-xs mt-1">{emotions[memory.emotion].icon}</div>
+                  <div className="text-xs mt-1">{emotions[memory.emotion as keyof typeof emotions].icon}</div>
                 )}
               </div>
             );
@@ -518,7 +566,7 @@ export default function MemoryTimeline() {
   };
 
   const renderDailyView = () => {
-    if (!selectedPeriod) return null;
+    if (!selectedPeriod || typeof selectedPeriod !== 'string') return null;
     
     const selectedDate = new Date(selectedPeriod);
     const memory = getMemoryForDate(selectedPeriod);
@@ -547,7 +595,7 @@ export default function MemoryTimeline() {
         {memory ? (
           <div className="space-y-6">
             <div className="text-center">
-              <div className="text-6xl mb-4">{emotions[memory.emotion].icon}</div>
+              <div className="text-6xl mb-4">{emotions[memory.emotion as keyof typeof emotions].icon}</div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">{memory.title}</h3>
               <p className="text-gray-600 text-lg">{memory.description}</p>
             </div>
@@ -626,6 +674,12 @@ export default function MemoryTimeline() {
       <div className="space-y-4">
         <h4 className="font-medium text-gray-700">Video Memory</h4>
         
+        {cameraError && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+            {cameraError}
+          </div>
+        )}
+        
         {!currentMemory.videoUrl ? (
           <div className="space-y-4">
             <div className="relative bg-gray-900 rounded-lg overflow-hidden">
@@ -693,18 +747,18 @@ export default function MemoryTimeline() {
               controls
               className="w-full h-48 rounded-lg"
               src={currentMemory.videoUrl}
-            />
+                          />
             <div className="flex justify-center space-x-2">
               <button
                 onClick={retakeVideo}
-                className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors flex items-center"
+                className="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition-colors flex items-center"
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
                 Retake
               </button>
               <button
                 onClick={downloadVideo}
-                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center"
+                className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors flex items-center"
               >
                 <Download className="w-4 h-4 mr-2" />
                 Download
@@ -720,137 +774,129 @@ export default function MemoryTimeline() {
     if (!showMemoryModal) return null;
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-gray-800">
-                Memory for {new Date(currentMemory.date).toLocaleDateString()}
-              </h3>
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-semibold text-gray-800">
+              {currentMemory.title ? 'Edit Memory' : 'Add Memory'}
+            </h2>
+            <button
+              onClick={() => {
+                setShowMemoryModal(false);
+                stopCamera();
+                resetMemoryForm();
+              }}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <input
+                type="date"
+                value={currentMemory.date}
+                onChange={(e) => setCurrentMemory({ ...currentMemory, date: e.target.value })}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                value={currentMemory.title}
+                onChange={(e) => setCurrentMemory({ ...currentMemory, title: e.target.value })}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="A memorable moment"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={currentMemory.description}
+                onChange={(e) => setCurrentMemory({ ...currentMemory, description: e.target.value })}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                rows={4}
+                placeholder="What happened? How did you feel?"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Emotion</label>
+              <div className="grid grid-cols-4 gap-2">
+                {Object.entries(emotions).map(([key, { icon, name, color }]) => (
+                  <button
+                    key={key}
+                    onClick={() => setCurrentMemory({ ...currentMemory, emotion: key })}
+                    className={`p-2 rounded-lg flex items-center justify-center ${currentMemory.emotion === key ? `${color} text-white` : 'bg-gray-100 text-gray-700'} hover:opacity-80 transition-colors`}
+                    title={name}
+                  >
+                    <span className="text-xl">{icon}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+              <input
+                type="text"
+                value={currentMemory.location}
+                onChange={(e) => setCurrentMemory({ ...currentMemory, location: e.target.value })}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Where were you?"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">People</label>
+              <input
+                type="text"
+                value={currentMemory.people}
+                onChange={(e) => setCurrentMemory({ ...currentMemory, people: e.target.value })}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Who was with you?"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.entries(categories).map(([key, { name, icon: Icon }]) => (
+                  <button
+                    key={key}
+                    onClick={() => setCurrentMemory({ ...currentMemory, category: key })}
+                    className={`p-2 rounded-lg flex items-center justify-center ${currentMemory.category === key ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'} hover:opacity-80 transition-colors`}
+                  >
+                    <Icon className="w-4 h-4 mr-1" />
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {renderVideoRecorder()}
+
+            <div className="flex justify-end space-x-2 mt-6">
               <button
                 onClick={() => {
                   setShowMemoryModal(false);
                   stopCamera();
                   resetMemoryForm();
                 }}
-                className="text-gray-400 hover:text-gray-600"
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
               >
-                <X className="w-6 h-6" />
+                Cancel
               </button>
-            </div>
-
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Memory Title
-                </label>
-                <input
-                  type="text"
-                  value={currentMemory.title}
-                  onChange={(e) => setCurrentMemory({...currentMemory, title: e.target.value})}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="What made this day special?"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description
-                </label>
-                <textarea
-                  value={currentMemory.description}
-                  onChange={(e) => setCurrentMemory({...currentMemory, description: e.target.value})}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows={3}
-                  placeholder="Tell the story of this moment..."
-                />
-              </div>
-
-              {renderVideoRecorder()}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  How did you feel?
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {Object.entries(emotions).map(([key, emotion]) => (
-                    <button
-                      key={key}
-                      onClick={() => setCurrentMemory({...currentMemory, emotion: key})}
-                      className={`p-3 rounded-lg border-2 transition-all ${
-                        currentMemory.emotion === key 
-                          ? 'border-blue-500 bg-blue-50' 
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="text-lg mb-1">{emotion.icon}</div>
-                      <div className="text-xs text-gray-600">{emotion.name}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Category
-                </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {Object.entries(categories).map(([key, category]) => {
-                    const Icon = category.icon;
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => setCurrentMemory({...currentMemory, category: key})}
-                        className={`p-3 rounded-lg border-2 transition-all ${
-                          currentMemory.category === key 
-                            ? 'border-blue-500 bg-blue-50' 
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4 mx-auto mb-1" />
-                        <div className="text-xs text-gray-600">{category.name}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={currentMemory.location}
-                    onChange={(e) => setCurrentMemory({...currentMemory, location: e.target.value})}
-                    className="w-full p-3 border border-gray-300 rounded-lg"
-                    placeholder="e.g., Paris, France"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    People
-                  </label>
-                  <input
-                    type="text"
-                    value={currentMemory.people}
-                    onChange={(e) => setCurrentMemory({...currentMemory, people: e.target.value})}
-                    className="w-full p-3 border border-gray-300 rounded-lg"
-                    placeholder="e.g., Mom, Dad"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6 bg-gray-50 rounded-b-xl">
-            <div className="flex justify-end">
               <button
                 onClick={saveMemory}
-                className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors flex items-center"
+                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+                disabled={!currentMemory.title.trim()}
               >
-                <Heart className="w-4 h-4 mr-2" />
                 Save Memory
               </button>
             </div>
@@ -860,71 +906,70 @@ export default function MemoryTimeline() {
     );
   };
 
-  if (step === 1) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center font-sans p-4">
-        <div className="bg-white p-8 rounded-xl shadow-lg text-center max-w-md w-full">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
-            <Calendar className="w-6 h-6 text-blue-600" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">Your Life in Weeks</h1>
-          <p className="text-gray-600 mb-6">Enter your birthdate to visualize your life's timeline and start capturing memories.</p>
-          <input
-            type="date"
-            value={birthdate}
-            onChange={(e) => setBirthdate(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-          <button
-            onClick={handleSubmit}
-            disabled={!birthdate}
-            className="mt-6 w-full bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            Start My Timeline
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
-      <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-        <header className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Your Life in Weeks</h1>
-            <p className="text-gray-600 mt-1">A visual journal of your life's moments.</p>
+    <div className="min-h-screen bg-gray-100">
+      {step === 1 ? (
+        <div className="max-w-md mx-auto pt-12">
+          <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Your Life Timeline</h1>
+          <div className="bg-white p-6 rounded-xl shadow-lg">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Enter your birthdate</label>
+            <input
+              type="date"
+              value={birthdate}
+              onChange={(e) => setBirthdate(e.target.value)}
+              className="w-full p-2 border rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <button
+              onClick={handleSubmit}
+              disabled={!birthdate}
+              className="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              Create Timeline
+            </button>
           </div>
-          <button 
-            onClick={() => setStep(1)}
-            className="text-sm text-blue-500 hover:text-blue-700 flex items-center"
-          >
-            <Edit3 className="w-4 h-4 mr-1" />
-            Change Birthdate
-          </button>
-        </header>
+        </div>
+      ) : (
+        <div className="max-w-7xl mx-auto px-4 py-12">
+          {stats && (
+            <div className="bg-white p-6 rounded-xl shadow-lg mb-8">
+              <h1 className="text-3xl font-bold text-gray-800 mb-4">Your Life Timeline</h1>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Years Lived</p>
+                  <p className="text-2xl font-semibold text-gray-800">{stats.yearsLived}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Days Lived</p>
+                  <p className="text-2xl font-semibold text-gray-800">{stats.daysLived.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Weeks Remaining</p>
+                  <p className="text-2xl font-semibold text-gray-800">{stats.weeksRemaining.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Life Lived</p>
+                  <p className="text-2xl font-semibold text-gray-800">{stats.percentageLived}%</p>
+                </div>
+              </div>
+            </div>
+          )}
 
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-xl shadow-md text-center transition hover:shadow-lg">
-              <h3 className="text-lg font-semibold text-gray-500">Weeks Lived</h3>
-              <p className="text-4xl font-bold text-blue-600">{stats.weeksLived.toLocaleString()}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-md text-center transition hover:shadow-lg">
-              <h3 className="text-lg font-semibold text-gray-500">Weeks Remaining</h3>
-              <p className="text-4xl font-bold text-green-600">{stats.weeksRemaining.toLocaleString()}</p>
-              <p className="text-sm text-gray-500">(assuming 80 years)</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-md text-center transition hover:shadow-lg">
-              <h3 className="text-lg font-semibold text-gray-500">Life Progress</h3>
-              <p className="text-4xl font-bold text-purple-600">{stats.percentageLived}%</p>
-            </div>
+          <div className="flex justify-center space-x-2 mb-8">
+            {(['annual', 'monthly', 'weekly', 'daily'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`px-4 py-2 rounded-lg capitalize ${viewMode === mode ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
-        )}
 
-        {renderCurrentView()}
-      </div>
-      {renderMemoryModal()}
+          {renderCurrentView()}
+          {renderMemoryModal()}
+        </div>
+      )}
     </div>
   );
 }

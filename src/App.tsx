@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Camera, Calendar, Heart, MapPin, Users, Star, Clock, Plus, Edit3, X, Video, Play, Pause, RotateCcw, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, Heart, MapPin, Users, Star, Clock, Plus, Edit3, X, Video, Play, Pause, RotateCcw, Download, ChevronLeft } from 'lucide-react';
 
 interface Stats {
   weeksLived: number;
@@ -88,7 +88,7 @@ export default function MemoryTimeline() {
     return () => {
       mountedRef.current = false;
     };
-  }, []);
+  }, [calculateStats]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -104,7 +104,7 @@ export default function MemoryTimeline() {
         }
       });
     };
-  }, [memories]);
+  }, [memories, stopCamera]);
 
   const calculateStats = useCallback((date: string): Stats => {
     const birthDate = new Date(date);
@@ -192,7 +192,7 @@ export default function MemoryTimeline() {
     setShowMemoryModal(false);
     stopCamera();
     resetMemoryForm();
-  }, [memories, currentMemory]);
+  }, [memories, currentMemory, stopCamera, resetMemoryForm]);
 
   const resetMemoryForm = useCallback(() => {
     if (!mountedRef.current) return;

@@ -75,6 +75,33 @@ export default function MemoryTimeline() {
     moment: { icon: Clock, name: 'Moment' }
   };
 
+  const calculateStats = useCallback((date: string): Stats => {
+    const birthDate = new Date(date);
+    const today = new Date();
+    
+    const msInWeek = 1000 * 60 * 60 * 24 * 7;
+    const weeksLived = Math.floor((today.getTime() - birthDate.getTime()) / msInWeek);
+    
+    const totalWeeks = 4160; // ~80 years
+    const weeksRemaining = Math.max(0, totalWeeks - weeksLived);
+    const percentageLived = Math.min(100, Math.round((weeksLived / totalWeeks) * 100));
+    
+    const msInDay = 1000 * 60 * 60 * 24;
+    const daysLived = Math.floor((today.getTime() - birthDate.getTime()) / msInDay);
+    
+    const yearsLived = Math.floor((today.getTime() - birthDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+    
+    return {
+      weeksLived,
+      totalWeeks,
+      weeksRemaining,
+      percentageLived,
+      daysLived,
+      yearsLived,
+      birthDate: date
+    };
+  }, []);
+
   // Initialize data on mount
   useEffect(() => {
     mountedRef.current = true;
@@ -106,32 +133,7 @@ export default function MemoryTimeline() {
     };
   }, [memories, stopCamera]);
 
-  const calculateStats = useCallback((date: string): Stats => {
-    const birthDate = new Date(date);
-    const today = new Date();
-    
-    const msInWeek = 1000 * 60 * 60 * 24 * 7;
-    const weeksLived = Math.floor((today.getTime() - birthDate.getTime()) / msInWeek);
-    
-    const totalWeeks = 4160; // ~80 years
-    const weeksRemaining = Math.max(0, totalWeeks - weeksLived);
-    const percentageLived = Math.min(100, Math.round((weeksLived / totalWeeks) * 100));
-    
-    const msInDay = 1000 * 60 * 60 * 24;
-    const daysLived = Math.floor((today.getTime() - birthDate.getTime()) / msInDay);
-    
-    const yearsLived = Math.floor((today.getTime() - birthDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
-    
-    return {
-      weeksLived,
-      totalWeeks,
-      weeksRemaining,
-      percentageLived,
-      daysLived,
-      yearsLived,
-      birthDate: date
-    };
-  }, []);
+  
 
   const getMemoryForDate = useCallback((date: string) => {
     return memories.find(m => m.date === date);

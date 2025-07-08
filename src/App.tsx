@@ -74,7 +74,7 @@ export default function MemoryTimeline() {
     localStorage.setItem('memories', JSON.stringify(memories));
   }, [memories]);
 
-  const calculateStats = (date) => {
+  const calculateStats = (date: string) => {
     const birthDate = new Date(date);
     const today = new Date();
     

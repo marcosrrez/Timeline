@@ -8,7 +8,7 @@ interface Stats {
   percentageLived: number;
   daysLived: number;
   yearsLived: number;
-  birthDate: Date;
+  birthDate: string;
 }
 
 export default function MemoryTimeline() {
@@ -107,7 +107,7 @@ export default function MemoryTimeline() {
       percentageLived,
       daysLived,
       yearsLived,
-      birthDate
+      birthDate: date
     };
   };
 
@@ -302,7 +302,7 @@ export default function MemoryTimeline() {
     if (!stats) return null;
     
     const currentYear = new Date().getFullYear();
-    const birthYear = stats.birthDate.getFullYear();
+    const birthYear = new Date(stats.birthDate).getFullYear();
     const years = [];
     
     for (let year = birthYear; year <= currentYear + 10; year++) {

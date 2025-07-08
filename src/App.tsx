@@ -813,7 +813,7 @@ export default function MemoryTimeline() {
                   <input
                     type="text"
                     value={currentMemory.location}
-                    onChange={(e) => setCurrentMemory({...currentMemory, location: e.target..value})}
+                    onChange={(e) => setCurrentMemory({...currentMemory, location: e.target.value})}
                     className="w-full p-3 border border-gray-300 rounded-lg"
                     placeholder="e.g., Paris, France"
                   />
